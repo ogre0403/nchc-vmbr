@@ -1,0 +1,4 @@
+github.com/Zillaforge/cloud-sdk v0.0.0-20251122035055-c0a04620b4ff h1:Q6ktkb6Ltv1I9zyAnSIy7CAole6Iw2KsTx9Kuniu4jI=
+github.com/Zillaforge/cloud-sdk v0.0.0-20251122035055-c0a04620b4ff/go.mod h1:2SGl5Rrziz1Aro8tZOWLcE7Xg8AUgPXSDcisqvWUmfc=
+github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
+github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
