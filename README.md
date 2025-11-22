@@ -8,6 +8,9 @@ Refactor notes:
 
 How to run:
 1. Create a `.env` file with required variables: API_PROTOCOL, API_HOST, API_TOKEN, PROJECT_SYS_CODE, SRC_VM, SNAPSHOT_NAME, CS_BUCKET
+
+Optional:
+- `DATE_TAG_FORMAT` - layout used to format the date tag for snapshots. If omitted, the default format `2006-01-02-15-04` is used. Use Go time layout strings for the format.
 2. Execute the backup command:
 
 ```bash

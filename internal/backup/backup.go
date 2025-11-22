@@ -24,6 +24,7 @@ type Config struct {
 	CSBucket       string
 	OsType         string
 	DateTag        string
+	DateTagFormat  string
 }
 
 // LoadConfigFromEnv loads configuration from environment variables. It returns an error if required
@@ -47,7 +48,14 @@ func LoadConfigFromEnv() (*Config, error) {
 		loc = time.FixedZone("UTC+8", 8*3600)
 	}
 
-	dateTag := time.Now().In(loc).Format("2006-01-02-15-04")
+	// Allow customizing the date tag format via environment variable DATE_TAG_FORMAT.
+	// If not set, default to 2006-01-02-15-04 layout used previously.
+	dateTagFormat := os.Getenv("DATE_TAG_FORMAT")
+	if dateTagFormat == "" {
+		dateTagFormat = "2006-01-02-15-04"
+	}
+
+	dateTag := time.Now().In(loc).Format(dateTagFormat)
 
 	cfg := &Config{
 		BaseURL:        baseURL,
@@ -58,6 +66,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		CSBucket:       csBucket,
 		OsType:         "linux",
 		DateTag:        dateTag,
+		DateTagFormat:  dateTagFormat,
 	}
 
 	return cfg, nil
