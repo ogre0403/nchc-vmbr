@@ -229,3 +229,30 @@ func TestLoadConfigFromEnv_MissingEnv(t *testing.T) {
 		t.Fatalf("error did not list missing env names; got %s", msg)
 	}
 }
+
+func TestLoadConfigFromEnv_TagNumParsing(t *testing.T) {
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+	os.Setenv("BACKUP_TAG_NUM", "5")
+	defer os.Unsetenv("BACKUP_TAG_NUM")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.TagNum != 5 {
+		t.Fatalf("expected TagNum to be 5, got %d", cfg.TagNum)
+	}
+}

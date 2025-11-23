@@ -182,3 +182,38 @@ func TestLoadConfigFromEnv_MissingFlavor(t *testing.T) {
 		t.Fatalf("expected error due to missing flavor, got nil")
 	}
 }
+
+func TestLoadConfigFromEnv_TagNumParsing(t *testing.T) {
+	os.Setenv("API_PROTOCOL", "http")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("RESTORE_REPO", "rocky")
+	defer os.Unsetenv("RESTORE_REPO")
+	os.Setenv("RESTORE_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("RESTORE_CS_BUCKET")
+	os.Setenv("RESTORE_IMAGE", "backup.img")
+	defer os.Unsetenv("RESTORE_IMAGE")
+	os.Setenv("RESTORE_FLAVOR_ID", "flavor-1")
+	defer os.Unsetenv("RESTORE_FLAVOR_ID")
+	os.Setenv("RESTORE_NETWORK_ID", "net-1")
+	defer os.Unsetenv("RESTORE_NETWORK_ID")
+	os.Setenv("RESTORE_KEYPAIR_ID", "kp-1")
+	defer os.Unsetenv("RESTORE_KEYPAIR_ID")
+	os.Setenv("RESTORE_SECURITYGROUP_ID", "sg-1")
+	defer os.Unsetenv("RESTORE_SECURITYGROUP_ID")
+	os.Setenv("RESTORE_TAG_NUM", "7")
+	defer os.Unsetenv("RESTORE_TAG_NUM")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.TagNum != 7 {
+		t.Fatalf("expected TagNum to be 7, got %d", cfg.TagNum)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
@@ -33,6 +34,7 @@ type Config struct {
 	VMNamePrefix   string
 	DateTag        string
 	OsType         string
+	TagNum         int
 }
 
 // LoadConfigFromEnv loads configuration from environment variables
@@ -79,6 +81,14 @@ func LoadConfigFromEnv() (*Config, error) {
 	dateTag := util.ApplyStrftime(dateTagFormat, now)
 	imagePath := util.BuildCSFilepath(os.Getenv("RESTORE_CS_BUCKET"), os.Getenv("RESTORE_IMAGE"), now)
 
+	// Parse RESTORE_TAG_NUM (max number of tags to keep)
+	tagNum := 2
+	if v := os.Getenv("RESTORE_TAG_NUM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			tagNum = n
+		}
+	}
+
 	cfg := &Config{
 		BaseURL:        baseURL,
 		Token:          token,
@@ -92,6 +102,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		VMNamePrefix:   vmNamePrefix,
 		DateTag:        dateTag,
 		OsType:         "linux",
+		TagNum:         tagNum,
 	}
 	return cfg, nil
 }
@@ -150,6 +161,12 @@ func Run(ctx context.Context, cfg *Config) error {
 		repoID = uploadResp.Repository.ID
 	} else {
 		log.Printf("Repository %s found; creating new tag version %s", cfg.RepoName, cfg.DateTag)
+		// Prune repo tags if configured (reserve one slot for the uploaded tag)
+		if cfg.TagNum > 0 {
+			if err := util.PruneRepositoryTags(ctx, vrmClient, repoID, cfg.TagNum-1); err != nil {
+				return fmt.Errorf("failed to prune repository tags: %w", err)
+			}
+		}
 		req := &vrmrepos.UploadToExistingRepositoryRequest{
 			RepositoryID:    repoID,
 			Version:         cfg.DateTag,

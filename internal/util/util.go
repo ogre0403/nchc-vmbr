@@ -1,11 +1,16 @@
 package util
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	vrmtags "github.com/Zillaforge/cloud-sdk/models/vrm/tags"
+	vrmcore "github.com/Zillaforge/cloud-sdk/modules/vrm/core"
 )
 
 // strftime-to-Go mappings
@@ -97,6 +102,49 @@ func RequireEnv(names ...string) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// PruneRepositoryTags ensures that the number of tags in the repository
+// identified by repoID does not exceed maxTags. If there are more tags than
+// maxTags, the oldest tags are deleted until the number of tags is <= maxTags.
+func PruneRepositoryTags(ctx context.Context, vrmClient *vrmcore.Client, repoID string, maxTags int) error {
+	if maxTags <= 0 {
+		return nil
+	}
+	repoRes, err := vrmClient.Repositories().Get(ctx, repoID)
+	if err != nil {
+		return fmt.Errorf("failed to get repository %s: %w", repoID, err)
+	}
+
+	lister := repoRes.Tags()
+	deleter := vrmClient.Tags()
+
+	// Fetch repository subresource to list tags scoped to this repo.
+	opts := &vrmtags.ListTagsOptions{Limit: -1}
+	tags, err := lister.List(ctx, opts)
+	if err != nil {
+		return fmt.Errorf("failed to list tags: %w", err)
+	}
+
+	if len(tags) <= maxTags {
+		return nil
+	}
+	// Sort by CreatedAt ascending (oldest first)
+	sort.Slice(tags, func(i, j int) bool { return tags[i].CreatedAt.Before(tags[j].CreatedAt) })
+
+	toDelete := len(tags) - maxTags
+	for i := 0; i < toDelete; i++ {
+		t := tags[i]
+		if t == nil || t.ID == "" {
+			continue
+		}
+		// Delete the tag; bubble up any error.
+
+		if err := deleter.Delete(ctx, t.ID); err != nil {
+			return fmt.Errorf("failed to delete tag %s: %w", t.ID, err)
+		}
 	}
 	return nil
 }

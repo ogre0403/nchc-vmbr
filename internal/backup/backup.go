@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	util "cloud-sdk-sample/internal/util"
@@ -30,6 +31,7 @@ type Config struct {
 	OsType         string
 	DateTag        string
 	BackupImage    string
+	TagNum         int
 	Now            time.Time
 }
 
@@ -73,6 +75,14 @@ func LoadConfigFromEnv() (*Config, error) {
 		backupImage = "backup-%Y-%m-%d.img"
 	}
 
+	// Parse BACKUP_TAG_NUM
+	tagNum := 2
+	if v := os.Getenv("BACKUP_TAG_NUM"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			tagNum = n
+		}
+	}
+
 	cfg := &Config{
 		BaseURL:        baseURL,
 		Token:          token,
@@ -83,6 +93,7 @@ func LoadConfigFromEnv() (*Config, error) {
 		OsType:         "linux",
 		DateTag:        dateTag,
 		BackupImage:    backupImage,
+		TagNum:         tagNum,
 		Now:            now,
 	}
 
@@ -141,6 +152,15 @@ func Run(ctx context.Context, cfg *Config) error {
 		}
 	} else {
 		log.Println("Repository found, creating snapshot into existing repository")
+		// If there is a tag retention policy defined, prune older tags first.
+		if cfg.TagNum > 0 {
+			// Prune the repository tags using the VRM client wrapper. The function
+			// will query the repository's tag subresource and delete the oldest tags
+			// if the configured limit is exceeded.
+			if err := util.PruneRepositoryTags(ctx, vrmClient, repoID, cfg.TagNum-1); err != nil {
+				return fmt.Errorf("failed to prune repository tags: %w", err)
+			}
+		}
 		req := &vrmrepos.CreateSnapshotFromExistingRepositoryRequest{RepositoryID: repoID, Version: cfg.DateTag}
 		snapshotResp, err = vrmClient.Repositories().Snapshot(ctx, vmID, req)
 		if err != nil {
