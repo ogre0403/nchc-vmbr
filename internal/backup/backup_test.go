@@ -1,7 +1,9 @@
 package backup
 
 import (
+	util "cloud-sdk-sample/internal/util"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,12 +18,12 @@ func TestLoadConfigFromEnv(t *testing.T) {
 	defer os.Unsetenv("API_TOKEN")
 	os.Setenv("PROJECT_SYS_CODE", "proj-123")
 	defer os.Unsetenv("PROJECT_SYS_CODE")
-	os.Setenv("SRC_VM", "test-vm")
-	defer os.Unsetenv("SRC_VM")
-	os.Setenv("SNAPSHOT_NAME", "snapshot-repo")
-	defer os.Unsetenv("SNAPSHOT_NAME")
-	os.Setenv("CS_BUCKET", "my-bucket")
-	defer os.Unsetenv("CS_BUCKET")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -45,30 +47,29 @@ func TestLoadConfigFromEnv_DefaultDateFormat(t *testing.T) {
 	defer os.Unsetenv("API_TOKEN")
 	os.Setenv("PROJECT_SYS_CODE", "proj-123")
 	defer os.Unsetenv("PROJECT_SYS_CODE")
-	os.Setenv("SRC_VM", "test-vm")
-	defer os.Unsetenv("SRC_VM")
-	os.Setenv("SNAPSHOT_NAME", "snapshot-repo")
-	defer os.Unsetenv("SNAPSHOT_NAME")
-	os.Setenv("CS_BUCKET", "my-bucket")
-	defer os.Unsetenv("CS_BUCKET")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Default format is "2006-01-02-15-04"; Try to parse DateTag
-	if cfg.DateTagFormat != "2006-01-02-15-04" {
-		t.Fatalf("expected default DateTagFormat to be 2006-01-02-15-04, got %s", cfg.DateTagFormat)
-	}
-	if _, err := time.ParseInLocation(cfg.DateTagFormat, cfg.DateTag, time.Local); err != nil {
-		t.Fatalf("expected DateTag to parse with default format, got error: %v", err)
+	// Default format is strftime %Y-%m-%d-%H-%M which corresponds to the previous layout
+	// Ensure the DateTag is formed using util.ApplyStrftime with the default format
+	wantDateTag := util.ApplyStrftime("%Y-%m-%d-%H-%M", cfg.Now)
+	if cfg.DateTag != wantDateTag {
+		t.Fatalf("expected DateTag to equal %s, got %s", wantDateTag, cfg.DateTag)
 	}
 }
 
 func TestLoadConfigFromEnv_CustomDateFormat(t *testing.T) {
-	// Set a custom date format
-	os.Setenv("DATE_TAG_FORMAT", "2006-01-02")
+	// Set a custom date format (strftime-style)
+	os.Setenv("DATE_TAG_FORMAT", "%Y-%m-%d")
 	defer os.Unsetenv("DATE_TAG_FORMAT")
 
 	// Set required env vars
@@ -80,22 +81,151 @@ func TestLoadConfigFromEnv_CustomDateFormat(t *testing.T) {
 	defer os.Unsetenv("API_TOKEN")
 	os.Setenv("PROJECT_SYS_CODE", "proj-123")
 	defer os.Unsetenv("PROJECT_SYS_CODE")
-	os.Setenv("SRC_VM", "test-vm")
-	defer os.Unsetenv("SRC_VM")
-	os.Setenv("SNAPSHOT_NAME", "snapshot-repo")
-	defer os.Unsetenv("SNAPSHOT_NAME")
-	os.Setenv("CS_BUCKET", "my-bucket")
-	defer os.Unsetenv("CS_BUCKET")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if cfg.DateTagFormat != "2006-01-02" {
-		t.Fatalf("expected DateTagFormat to equal custom format, got %s", cfg.DateTagFormat)
+	// DATE_TAG_FORMAT should affect the resulting DateTag even though it is not stored in cfg
+	wantDateTag := util.ApplyStrftime("%Y-%m-%d", cfg.Now)
+	if cfg.DateTag != wantDateTag {
+		t.Fatalf("expected DateTag to equal %s, got %s", wantDateTag, cfg.DateTag)
 	}
-	if _, err := time.ParseInLocation(cfg.DateTagFormat, cfg.DateTag, time.Local); err != nil {
-		t.Fatalf("expected DateTag to parse with custom format, got error: %v", err)
+}
+
+func TestBuildCSFilepath_Strftime(t *testing.T) {
+	// Fix the time used by nowFunc to be deterministic
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2025, 11, 22, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)) }
+	defer func() { nowFunc = origNow }()
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+	os.Setenv("BACKUP_IMAGE", "backup-%Y-%m-%d.img")
+	defer os.Unsetenv("BACKUP_IMAGE")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	want := "dss-public://my-bucket/backup-2025-11-22.img"
+	if got != want {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestBuildCSFilepath_BraceFormat(t *testing.T) {
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2025, 11, 22, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)) }
+	defer func() { nowFunc = origNow }()
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+	os.Setenv("BACKUP_IMAGE", "backup-{YYYY}-{MM}-{DD}.img")
+	defer os.Unsetenv("BACKUP_IMAGE")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	// Brace tokens shouldn't be converted, so they remain in the filename as literal characters.
+	if !strings.Contains(got, "{YYYY}") {
+		t.Fatalf("expected braces to remain literal in filename, got %s", got)
+	}
+	if !strings.HasSuffix(got, ".img") {
+		t.Fatalf("expected filepath to end with .img, got %s", got)
+	}
+}
+
+func TestBuildCSFilepath_DefaultFallback(t *testing.T) {
+	// Brace-style token support has been removed; braces are left literal in filenames.
+	origNow := nowFunc
+	nowFunc = func() time.Time { return time.Date(2025, 11, 22, 10, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)) }
+	defer func() { nowFunc = origNow }()
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+	os.Setenv("BACKUP_IMAGE", "backup-{YYYY}-{MM}-{DD}.img")
+	defer os.Unsetenv("BACKUP_IMAGE")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	if !strings.Contains(got, "{YYYY}") {
+		t.Fatalf("expected braces to remain literal in filename, got %s", got)
+	}
+	if !strings.HasSuffix(got, ".img") {
+		t.Fatalf("expected filepath to end with .img, got %s", got)
+	}
+}
+
+func TestLoadConfigFromEnv_MissingEnv(t *testing.T) {
+	// Do not set any environment variables to simulate missing required variables.
+	os.Unsetenv("API_PROTOCOL")
+	os.Unsetenv("API_HOST")
+	os.Unsetenv("API_TOKEN")
+	os.Unsetenv("PROJECT_SYS_CODE")
+	os.Unsetenv("BACKUP_SRC_VM")
+	os.Unsetenv("BACKUP_REPO")
+	os.Unsetenv("BACKUP_CS_BUCKET")
+
+	_, err := LoadConfigFromEnv()
+	if err == nil {
+		t.Fatalf("expected error due to missing envs, got nil")
+	}
+	msg := err.Error()
+	// Check that the error lists some of the required env names
+	if !strings.Contains(msg, "API_TOKEN") || !strings.Contains(msg, "BACKUP_REPO") {
+		t.Fatalf("error did not list missing env names; got %s", msg)
 	}
 }

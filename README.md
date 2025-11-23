@@ -18,3 +18,12 @@ go run ./cmd/backup
 ```
 
 This repo uses `godotenv` to load variables and has a test for the `internal/backup` config loader.
+
+Recover flow:
+- Required env vars: API_PROTOCOL, API_HOST, API_TOKEN, PROJECT_SYS_CODE, RESTORE_IMAGE_NAME, RESTORE_IMAGE_PATH or (RESTORE_CS_BUCKET + DATE_TAG), RESTORE_FLAVOR_ID, RESTORE_NETWORK_ID
+- Optional: RESTORE_SG_ID, RESTORE_VM_PREFIX, RESTORE_PASSWORD_BASE64 (or RESTORE_PASSWORD), RESTORE_OS_TYPE
+
+To execute recover:
+```bash
+go run ./cmd/recover
+```

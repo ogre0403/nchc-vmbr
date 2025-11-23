@@ -7,12 +7,17 @@ import (
 	"os"
 	"time"
 
+	util "cloud-sdk-sample/internal/util"
+
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
 	vpsservers "github.com/Zillaforge/cloud-sdk/models/vps/servers"
 	vrmrepos "github.com/Zillaforge/cloud-sdk/models/vrm/repositories"
 	vrmtags "github.com/Zillaforge/cloud-sdk/models/vrm/tags"
 	vrm "github.com/Zillaforge/cloud-sdk/modules/vrm/core"
 )
+
+// nowFunc can be overridden by tests for deterministic timestamp generation.
+var nowFunc = time.Now
 
 // Config holds configuration options for a backup run.
 type Config struct {
@@ -24,22 +29,25 @@ type Config struct {
 	CSBucket       string
 	OsType         string
 	DateTag        string
-	DateTagFormat  string
+	BackupImage    string
+	Now            time.Time
 }
 
 // LoadConfigFromEnv loads configuration from environment variables. It returns an error if required
 // variables are missing.
 func LoadConfigFromEnv() (*Config, error) {
+	// Validate required environment variables using the util helper. This
+	// produces an error that explicitly names which variables are missing.
+	if err := util.RequireEnv("API_TOKEN", "API_PROTOCOL", "API_HOST", "PROJECT_SYS_CODE", "BACKUP_SRC_VM", "BACKUP_REPO", "BACKUP_CS_BUCKET"); err != nil {
+		return nil, err
+	}
+
 	baseURL := fmt.Sprintf("%s://%s", os.Getenv("API_PROTOCOL"), os.Getenv("API_HOST"))
 	token := os.Getenv("API_TOKEN")
 	projectSysCode := os.Getenv("PROJECT_SYS_CODE")
-	vmName := os.Getenv("SRC_VM")
-	repoName := os.Getenv("SNAPSHOT_NAME")
-	csBucket := os.Getenv("CS_BUCKET")
-
-	if token == "" || projectSysCode == "" || vmName == "" || repoName == "" || csBucket == "" {
-		return nil, fmt.Errorf("missing required environment variables (API_TOKEN, PROJECT_SYS_CODE, SRC_VM, SNAPSHOT_NAME, CS_BUCKET)")
-	}
+	vmName := os.Getenv("BACKUP_SRC_VM")
+	repoName := os.Getenv("BACKUP_REPO")
+	csBucket := os.Getenv("BACKUP_CS_BUCKET")
 
 	// Use Taiwan timezone for tagging; fallback to fixed offset.
 	loc, err := time.LoadLocation("Asia/Taipei")
@@ -49,13 +57,21 @@ func LoadConfigFromEnv() (*Config, error) {
 	}
 
 	// Allow customizing the date tag format via environment variable DATE_TAG_FORMAT.
-	// If not set, default to 2006-01-02-15-04 layout used previously.
+	// Accept a strftime-style format (e.g. %Y-%m-%d-%H-%M), convert and apply it using util.ApplyStrftime.
+	// If not set, default to %Y-%m-%d-%H-%M to mimic the original layout 2006-01-02-15-04.
 	dateTagFormat := os.Getenv("DATE_TAG_FORMAT")
 	if dateTagFormat == "" {
-		dateTagFormat = "2006-01-02-15-04"
+		dateTagFormat = "%Y-%m-%d-%H-%M"
 	}
 
-	dateTag := time.Now().In(loc).Format(dateTagFormat)
+	now := nowFunc().In(loc)
+	dateTag := util.ApplyStrftime(dateTagFormat, now)
+
+	// Default BACKUP_IMAGE is a strftime pattern; use ISO date-like pattern by default.
+	backupImage := os.Getenv("BACKUP_IMAGE")
+	if backupImage == "" {
+		backupImage = "backup-%Y-%m-%d.img"
+	}
 
 	cfg := &Config{
 		BaseURL:        baseURL,
@@ -66,7 +82,8 @@ func LoadConfigFromEnv() (*Config, error) {
 		CSBucket:       csBucket,
 		OsType:         "linux",
 		DateTag:        dateTag,
-		DateTagFormat:  dateTagFormat,
+		BackupImage:    backupImage,
+		Now:            now,
 	}
 
 	return cfg, nil
@@ -147,7 +164,7 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	// Export snapshot to CS
 	downloadReq := &vrmtags.DownloadTagRequest{
-		Filepath: fmt.Sprintf("dss-public://%s/backup-%s.img", cfg.CSBucket, cfg.DateTag),
+		Filepath: util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now),
 	}
 
 	if err := vrmClient.Tags().Download(ctx, tagID, downloadReq); err != nil {
@@ -157,3 +174,5 @@ func Run(ctx context.Context, cfg *Config) error {
 	log.Println("Exported snapshot to S3 successfully")
 	return nil
 }
+
+// build and formatting logic lives in internal/util now
