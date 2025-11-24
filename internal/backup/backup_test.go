@@ -1,7 +1,7 @@
 package backup
 
 import (
-	util "cloud-sdk-sample/internal/util"
+	util "nchc-vmbr/internal/util"
 	"os"
 	"strings"
 	"testing"

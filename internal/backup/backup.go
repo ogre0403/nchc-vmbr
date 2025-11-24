@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	util "cloud-sdk-sample/internal/util"
+	util "nchc-vmbr/internal/util"
 
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
 	vpsservers "github.com/Zillaforge/cloud-sdk/models/vps/servers"

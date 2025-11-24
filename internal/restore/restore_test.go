@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	util "cloud-sdk-sample/internal/util"
+	util "nchc-vmbr/internal/util"
 )
 
 func TestLoadConfigFromEnv_Basic(t *testing.T) {

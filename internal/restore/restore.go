@@ -11,7 +11,7 @@ import (
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
 	vrmrepos "github.com/Zillaforge/cloud-sdk/models/vrm/repositories"
 
-	util "cloud-sdk-sample/internal/util"
+	util "nchc-vmbr/internal/util"
 
 	vpsservers "github.com/Zillaforge/cloud-sdk/models/vps/servers"
 	vps "github.com/Zillaforge/cloud-sdk/modules/vps/core"

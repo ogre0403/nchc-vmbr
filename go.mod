@@ -1,4 +1,4 @@
-module cloud-sdk-sample
+module nchc-vmbr
 
 go 1.24.3
 

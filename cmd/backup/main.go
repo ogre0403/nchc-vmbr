@@ -7,7 +7,7 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"cloud-sdk-sample/internal/backup"
+	"nchc-vmbr/internal/backup"
 )
 
 func main() {

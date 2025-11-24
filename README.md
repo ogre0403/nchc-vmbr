@@ -1,4 +1,4 @@
-# cloud-sdk-sample
+# nchc-vmbr
 
 This sample demonstrates using the `Zillaforge` Cloud SDK to create VM snapshots and export them.
 
