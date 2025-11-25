@@ -6,8 +6,11 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	config "nchc-vmbr/internal/config"
+	rclone "nchc-vmbr/internal/rclone"
 	util "nchc-vmbr/internal/util"
 
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
@@ -20,27 +23,16 @@ import (
 // nowFunc can be overridden by tests for deterministic timestamp generation.
 var nowFunc = time.Now
 
-// Config holds configuration options for a backup run.
-type Config struct {
-	BaseURL        string
-	Token          string
-	ProjectSysCode string
-	VMName         string
-	RepoName       string
-	CSBucket       string
-	OsType         string
-	DateTag        string
-	BackupImage    string
-	TagNum         int
-	Now            time.Time
-}
+// backup.Config is now provided by internal/config.Config (shared struct)
 
 // LoadConfigFromEnv loads configuration from environment variables. It returns an error if required
 // variables are missing.
-func LoadConfigFromEnv() (*Config, error) {
+func LoadConfigFromEnv() (*config.Config, error) {
 	// Validate required environment variables using the util helper. This
 	// produces an error that explicitly names which variables are missing.
-	if err := util.RequireEnv("API_TOKEN", "API_PROTOCOL", "API_HOST", "PROJECT_SYS_CODE", "BACKUP_SRC_VM", "BACKUP_REPO", "BACKUP_CS_BUCKET"); err != nil {
+	if err := util.RequireEnv(
+		"API_TOKEN", "API_PROTOCOL", "API_HOST", "PROJECT_SYS_CODE",
+		"BACKUP_SRC_VM", "BACKUP_REPO", "BACKUP_CS_BUCKET"); err != nil {
 		return nil, err
 	}
 
@@ -83,25 +75,70 @@ func LoadConfigFromEnv() (*Config, error) {
 		}
 	}
 
-	cfg := &Config{
-		BaseURL:        baseURL,
-		Token:          token,
-		ProjectSysCode: projectSysCode,
-		VMName:         vmName,
-		RepoName:       repoName,
-		CSBucket:       csBucket,
-		OsType:         "linux",
-		DateTag:        dateTag,
-		BackupImage:    backupImage,
-		TagNum:         tagNum,
-		Now:            now,
+	// Read BACKUP_TRANSFR_TO_S3 env var — default to "false" if not set.
+	transferFlag := false
+	if v := os.Getenv("BACKUP_TRANSFR_TO_S3"); v != "" {
+		// Accept common true-ish values (true, 1, yes, y)
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "y":
+			transferFlag = true
+		default:
+			transferFlag = false
+		}
+	}
+
+	var srcCfg rclone.S3Config
+	var dstCfg rclone.S3Config
+	var srcPtr *rclone.S3Config
+	var dstPtr *rclone.S3Config
+
+	// Only require and populate S3 configuration when transfer is enabled.
+	if transferFlag {
+		if err := util.RequireEnv(
+			"BACKUP_SRC_S3_ENDPOINT", "BACKUP_SRC_S3_ACCESS_KEY", "BACKUP_SRC_S3_SECRET_KEY", "BACKUP_SRC_S3_BUCKET",
+			"BACKUP_DST_S3_ENDPOINT", "BACKUP_DST_S3_ACCESS_KEY", "BACKUP_DST_S3_SECRET_KEY", "BACKUP_DST_S3_BUCKET",
+		); err != nil {
+			return nil, err
+		}
+
+		srcCfg = rclone.S3Config{
+			Endpoint:  os.Getenv("BACKUP_SRC_S3_ENDPOINT"),
+			AccessKey: os.Getenv("BACKUP_SRC_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("BACKUP_SRC_S3_SECRET_KEY"),
+			Bucket:    os.Getenv("BACKUP_SRC_S3_BUCKET"),
+		}
+		dstCfg = rclone.S3Config{
+			Endpoint:  os.Getenv("BACKUP_DST_S3_ENDPOINT"),
+			AccessKey: os.Getenv("BACKUP_DST_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("BACKUP_DST_S3_SECRET_KEY"),
+			Bucket:    os.Getenv("BACKUP_DST_S3_BUCKET"),
+		}
+		srcPtr = &srcCfg
+		dstPtr = &dstCfg
+	}
+
+	cfg := &config.Config{
+		BaseURL:            baseURL,
+		Token:              token,
+		ProjectSysCode:     projectSysCode,
+		VMName:             vmName,
+		RepoName:           repoName,
+		CSBucket:           csBucket,
+		OsType:             "linux",
+		DateTag:            dateTag,
+		BackupRestoreImage: backupImage,
+		TagNum:             tagNum,
+		Now:                now,
+		SrcS3Cfg:           srcPtr,
+		DstS3Cfg:           dstPtr,
+		TransferS3:         transferFlag,
 	}
 
 	return cfg, nil
 }
 
 // Run performs the complete backup flow using the provided configuration.
-func Run(ctx context.Context, cfg *Config) error {
+func Run(ctx context.Context, cfg *config.Config) error {
 	client, err := cloudsdk.New(cfg.BaseURL, cfg.Token)
 	if err != nil {
 		return fmt.Errorf("failed to create SDK client: %w", err)
@@ -184,7 +221,7 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	// Export snapshot to CS
 	downloadReq := &vrmtags.DownloadTagRequest{
-		Filepath: util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now),
+		Filepath: util.BuildCSFilepath(cfg.CSBucket, cfg.BackupRestoreImage, cfg.Now),
 	}
 
 	if err := vrmClient.Tags().Download(ctx, tagID, downloadReq); err != nil {
@@ -194,5 +231,3 @@ func Run(ctx context.Context, cfg *Config) error {
 	log.Println("Exported snapshot to S3 successfully")
 	return nil
 }
-
-// build and formatting logic lives in internal/util now

@@ -128,7 +128,7 @@ func TestBuildCSFilepath_Strftime(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupRestoreImage, cfg.Now)
 	want := "dss-public://my-bucket/backup-2025-11-22.img"
 	if got != want {
 		t.Fatalf("expected %s, got %s", want, got)
@@ -162,7 +162,7 @@ func TestBuildCSFilepath_BraceFormat(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupRestoreImage, cfg.Now)
 	// Brace tokens shouldn't be converted, so they remain in the filename as literal characters.
 	if !strings.Contains(got, "{YYYY}") {
 		t.Fatalf("expected braces to remain literal in filename, got %s", got)
@@ -200,7 +200,7 @@ func TestBuildCSFilepath_DefaultFallback(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupImage, cfg.Now)
+	got := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupRestoreImage, cfg.Now)
 	if !strings.Contains(got, "{YYYY}") {
 		t.Fatalf("expected braces to remain literal in filename, got %s", got)
 	}
@@ -254,5 +254,121 @@ func TestLoadConfigFromEnv_TagNumParsing(t *testing.T) {
 	}
 	if cfg.TagNum != 5 {
 		t.Fatalf("expected TagNum to be 5, got %d", cfg.TagNum)
+	}
+}
+
+func TestLoadConfigFromEnv_TransferDefaultFalse(t *testing.T) {
+	// Default should be false and S3 config pointers should be nil when BACKUP_TRANSFR_TO_S3 is not set
+	os.Unsetenv("BACKUP_TRANSFR_TO_S3")
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if cfg.TransferS3 != false {
+		t.Fatalf("expected TransferS3 to be false by default, got %v", cfg.TransferS3)
+	}
+	if cfg.SrcS3Cfg != nil || cfg.DstS3Cfg != nil {
+		t.Fatalf("expected S3 configs to be nil when transfer disabled, got %+v %+v", cfg.SrcS3Cfg, cfg.DstS3Cfg)
+	}
+}
+
+func TestLoadConfigFromEnv_TransferEnabled(t *testing.T) {
+	// When BACKUP_TRANSFR_TO_S3=true and S3 env vars are present, pointers should be initialized
+	os.Setenv("BACKUP_TRANSFR_TO_S3", "true")
+	defer os.Unsetenv("BACKUP_TRANSFR_TO_S3")
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+
+	// S3 envs required when enabling transfer
+	os.Setenv("BACKUP_SRC_S3_ENDPOINT", "https://src.example.com")
+	defer os.Unsetenv("BACKUP_SRC_S3_ENDPOINT")
+	os.Setenv("BACKUP_SRC_S3_ACCESS_KEY", "src-access")
+	defer os.Unsetenv("BACKUP_SRC_S3_ACCESS_KEY")
+	os.Setenv("BACKUP_SRC_S3_SECRET_KEY", "src-secret")
+	defer os.Unsetenv("BACKUP_SRC_S3_SECRET_KEY")
+	os.Setenv("BACKUP_SRC_S3_BUCKET", "src-bucket")
+	defer os.Unsetenv("BACKUP_SRC_S3_BUCKET")
+
+	os.Setenv("BACKUP_DST_S3_ENDPOINT", "https://dst.example.com")
+	defer os.Unsetenv("BACKUP_DST_S3_ENDPOINT")
+	os.Setenv("BACKUP_DST_S3_ACCESS_KEY", "dst-access")
+	defer os.Unsetenv("BACKUP_DST_S3_ACCESS_KEY")
+	os.Setenv("BACKUP_DST_S3_SECRET_KEY", "dst-secret")
+	defer os.Unsetenv("BACKUP_DST_S3_SECRET_KEY")
+	os.Setenv("BACKUP_DST_S3_BUCKET", "dst-bucket")
+	defer os.Unsetenv("BACKUP_DST_S3_BUCKET")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if cfg.TransferS3 != true {
+		t.Fatalf("expected TransferS3 to be true, got %v", cfg.TransferS3)
+	}
+	if cfg.SrcS3Cfg == nil || cfg.DstS3Cfg == nil {
+		t.Fatalf("expected S3 configs to be initialized when transfer enabled, got %+v %+v", cfg.SrcS3Cfg, cfg.DstS3Cfg)
+	}
+	if cfg.SrcS3Cfg.Bucket != "src-bucket" || cfg.DstS3Cfg.Bucket != "dst-bucket" {
+		t.Fatalf("unexpected bucket values: %+v %+v", cfg.SrcS3Cfg, cfg.DstS3Cfg)
+	}
+}
+
+func TestTransfer_ReturnsErrorWhenNotConfigured(t *testing.T) {
+	// Default config from env should not enable transfer so Transfer should return an informative error
+	os.Unsetenv("BACKUP_TRANSFR_TO_S3")
+
+	os.Setenv("API_PROTOCOL", "https")
+	defer os.Unsetenv("API_PROTOCOL")
+	os.Setenv("API_HOST", "api.example.com")
+	defer os.Unsetenv("API_HOST")
+	os.Setenv("API_TOKEN", "test-token")
+	defer os.Unsetenv("API_TOKEN")
+	os.Setenv("PROJECT_SYS_CODE", "proj-123")
+	defer os.Unsetenv("PROJECT_SYS_CODE")
+	os.Setenv("BACKUP_SRC_VM", "test-vm")
+	defer os.Unsetenv("BACKUP_SRC_VM")
+	os.Setenv("BACKUP_REPO", "snapshot-repo")
+	defer os.Unsetenv("BACKUP_REPO")
+	os.Setenv("BACKUP_CS_BUCKET", "my-bucket")
+	defer os.Unsetenv("BACKUP_CS_BUCKET")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("expected no error loading config, got %v", err)
+	}
+
+	if err := util.Transfer(cfg); err == nil {
+		t.Fatalf("expected error when calling Transfer while not configured, got nil")
 	}
 }

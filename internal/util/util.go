@@ -11,6 +11,9 @@ import (
 
 	vrmtags "github.com/Zillaforge/cloud-sdk/models/vrm/tags"
 	vrmcore "github.com/Zillaforge/cloud-sdk/modules/vrm/core"
+
+	config "nchc-vmbr/internal/config"
+	rclone "nchc-vmbr/internal/rclone"
 )
 
 // strftime-to-Go mappings
@@ -32,12 +35,11 @@ func ApplyStrftime(format string, t time.Time) string {
 	var b strings.Builder
 	i := 0
 	placeholderMap := make(map[string]string)
-	// generate alphabetic placeholders (A, B, C, ...)
+	// generate alphabetic placeholders (Z, ZZ, ZZZ, ...)
 	var phIndex int
 	nextPlaceholder := func() string {
-		p := fmt.Sprintf("__LIT_%d__", phIndex)
 		phIndex++
-		return p
+		return fmt.Sprintf("__LIT_%s__", strings.Repeat("Z", phIndex))
 	}
 	digitRe := regexp.MustCompile(`\d+`)
 	for i < len(format) {
@@ -145,6 +147,42 @@ func PruneRepositoryTags(ctx context.Context, vrmClient *vrmcore.Client, repoID 
 		if err := deleter.Delete(ctx, t.ID); err != nil {
 			return fmt.Errorf("failed to delete tag %s: %w", t.ID, err)
 		}
+	}
+	return nil
+}
+
+// Transfer performs S3 transfer using rclone for backup or restore operations.
+func Transfer(cfg *config.Config) error {
+	// Ensure transfer was enabled and S3 configs were initialized.
+	if cfg == nil {
+		return fmt.Errorf("nil config")
+	}
+	if !cfg.TransferS3 || cfg.SrcS3Cfg == nil || cfg.DstS3Cfg == nil {
+		return fmt.Errorf("S3 transfer not configured; set RESTORE_TRANSFR_FROM_S3=true or BACKUP_TRANSFR_TO_S3=true and provide S3 configuration env vars to enable transfer")
+	}
+
+	fileName := cfg.BackupRestoreImage
+	if strings.Contains(fileName, "%") {
+		fileName = ApplyStrftime(fileName, cfg.Now)
+	}
+
+	dstRemote := fileName
+
+	// Run transfer using rclone helper. Initialize librclone for this operation.
+	rclone.Init()
+	defer rclone.Close()
+
+	jobID, totalSize, err := rclone.CopyFileAsync(*cfg.SrcS3Cfg, fileName, *cfg.DstS3Cfg, dstRemote)
+	if err != nil {
+		return fmt.Errorf("failed to start transfer job: %w", err)
+	}
+
+	ok, dur, err := rclone.WaitJob(jobID, totalSize, 5*time.Second, true)
+	if err != nil {
+		return fmt.Errorf("transfer job error: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("transfer job failed after %.2fs", dur)
 	}
 	return nil
 }

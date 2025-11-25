@@ -6,11 +6,14 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	cloudsdk "github.com/Zillaforge/cloud-sdk"
 	vrmrepos "github.com/Zillaforge/cloud-sdk/models/vrm/repositories"
 
+	config "nchc-vmbr/internal/config"
+	"nchc-vmbr/internal/rclone"
 	util "nchc-vmbr/internal/util"
 
 	vpsservers "github.com/Zillaforge/cloud-sdk/models/vps/servers"
@@ -20,25 +23,10 @@ import (
 
 var nowFunc = time.Now
 
-// Config for restore operation
-type Config struct {
-	BaseURL        string
-	Token          string
-	ProjectSysCode string
-	RepoName       string // repository/image name
-	ImageFilePath  string // dss-public://bucket/path/file.img
-	FlavorID       string
-	NetworkID      string
-	KeypairID      string
-	SecurityGroup  string
-	VMNamePrefix   string
-	DateTag        string
-	OsType         string
-	TagNum         int
-}
+// restore.Config is now provided by internal/config.Config (shared struct)
 
 // LoadConfigFromEnv loads configuration from environment variables
-func LoadConfigFromEnv() (*Config, error) {
+func LoadConfigFromEnv() (*config.Config, error) {
 	if err := util.RequireEnv(
 		"API_TOKEN", "API_PROTOCOL", "API_HOST", "PROJECT_SYS_CODE",
 		"RESTORE_REPO", "RESTORE_CS_BUCKET", "RESTORE_IMAGE",
@@ -51,7 +39,7 @@ func LoadConfigFromEnv() (*Config, error) {
 	baseURL := fmt.Sprintf("%s://%s", os.Getenv("API_PROTOCOL"), os.Getenv("API_HOST"))
 	token := os.Getenv("API_TOKEN")
 	projectSysCode := os.Getenv("PROJECT_SYS_CODE")
-
+	csBucket := os.Getenv("RESTORE_CS_BUCKET")
 	repoName := os.Getenv("RESTORE_REPO")
 
 	// Required runtime configuration: all must be provided via environment vars
@@ -79,7 +67,10 @@ func LoadConfigFromEnv() (*Config, error) {
 	// compute current time and date tag after timezone loc is available
 	now := nowFunc().In(loc)
 	dateTag := util.ApplyStrftime(dateTagFormat, now)
-	imagePath := util.BuildCSFilepath(os.Getenv("RESTORE_CS_BUCKET"), os.Getenv("RESTORE_IMAGE"), now)
+	restoreImage := os.Getenv("RESTORE_IMAGE")
+	if restoreImage == "" {
+		restoreImage = "backup-%Y-%m-%d.img"
+	}
 
 	// Parse RESTORE_TAG_NUM (max number of tags to keep)
 	tagNum := 2
@@ -89,26 +80,74 @@ func LoadConfigFromEnv() (*Config, error) {
 		}
 	}
 
-	cfg := &Config{
-		BaseURL:        baseURL,
-		Token:          token,
-		ProjectSysCode: projectSysCode,
-		RepoName:       repoName,
-		ImageFilePath:  imagePath,
-		FlavorID:       flavorID,
-		KeypairID:      keypairID,
-		NetworkID:      networkID,
-		SecurityGroup:  sgID,
-		VMNamePrefix:   vmNamePrefix,
-		DateTag:        dateTag,
-		OsType:         "linux",
-		TagNum:         tagNum,
+	// Read RESTORE_TRANSFR_FROM_S3 env var — default to "false" if not set.
+	transferFlag := false
+	if v := os.Getenv("RESTORE_TRANSFR_FROM_S3"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "y":
+			transferFlag = true
+		default:
+			transferFlag = false
+		}
+	}
+
+	var srcCfg rclone.S3Config
+	var dstCfg rclone.S3Config
+	var srcPtr *rclone.S3Config
+	var dstPtr *rclone.S3Config
+
+	if transferFlag {
+		// require restore S3 envs when transfer-from-s3 is enabled
+		if err := util.RequireEnv(
+			"RESTORE_SRC_S3_ENDPOINT", "RESTORE_SRC_S3_ACCESS_KEY", "RESTORE_SRC_S3_SECRET_KEY", "RESTORE_SRC_S3_BUCKET",
+			"RESTORE_DST_S3_ENDPOINT", "RESTORE_DST_S3_ACCESS_KEY", "RESTORE_DST_S3_SECRET_KEY", "RESTORE_DST_S3_BUCKET",
+		); err != nil {
+			return nil, err
+		}
+
+		srcCfg = rclone.S3Config{
+			Endpoint:  os.Getenv("RESTORE_SRC_S3_ENDPOINT"),
+			AccessKey: os.Getenv("RESTORE_SRC_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("RESTORE_SRC_S3_SECRET_KEY"),
+			Bucket:    os.Getenv("RESTORE_SRC_S3_BUCKET"),
+		}
+		dstCfg = rclone.S3Config{
+			Endpoint:  os.Getenv("RESTORE_DST_S3_ENDPOINT"),
+			AccessKey: os.Getenv("RESTORE_DST_S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("RESTORE_DST_S3_SECRET_KEY"),
+			Bucket:    os.Getenv("RESTORE_DST_S3_BUCKET"),
+		}
+		srcPtr = &srcCfg
+		dstPtr = &dstCfg
+	}
+
+	cfg := &config.Config{
+		BaseURL:            baseURL,
+		Token:              token,
+		ProjectSysCode:     projectSysCode,
+		RepoName:           repoName,
+		CSBucket:           csBucket,
+		BackupRestoreImage: restoreImage,
+		VPSSetting: &config.VPSSetting{
+			FlavorID:        flavorID,
+			NetworkID:       networkID,
+			KeypairID:       keypairID,
+			SecurityGroupID: sgID,
+		},
+		VMName:     vmNamePrefix,
+		DateTag:    dateTag,
+		OsType:     "linux",
+		TagNum:     tagNum,
+		Now:        now,
+		SrcS3Cfg:   srcPtr,
+		DstS3Cfg:   dstPtr,
+		TransferS3: transferFlag,
 	}
 	return cfg, nil
 }
 
 // Run executes the restore workflow.
-func Run(ctx context.Context, cfg *Config) error {
+func Run(ctx context.Context, cfg *config.Config) error {
 	client, err := cloudsdk.New(cfg.BaseURL, cfg.Token)
 	if err != nil {
 		return fmt.Errorf("failed to create SDK client: %w", err)
@@ -141,6 +180,8 @@ func Run(ctx context.Context, cfg *Config) error {
 
 	// Upload image to repository (create repo or add tag)
 	var uploadResp *vrmrepos.UploadImageResponse
+	imagePath := util.BuildCSFilepath(cfg.CSBucket, cfg.BackupRestoreImage, cfg.Now)
+
 	if repoID == "" {
 		log.Printf("Repository %s not found; creating and uploading image", cfg.RepoName)
 		req := &vrmrepos.UploadToNewRepositoryRequest{
@@ -151,7 +192,7 @@ func Run(ctx context.Context, cfg *Config) error {
 			Type:            "common",
 			DiskFormat:      "raw",
 			ContainerFormat: "bare",
-			Filepath:        cfg.ImageFilePath,
+			Filepath:        imagePath,
 		}
 
 		uploadResp, err = vrmClient.Repositories().Upload(ctx, req)
@@ -173,7 +214,7 @@ func Run(ctx context.Context, cfg *Config) error {
 			Type:            "common",
 			DiskFormat:      "raw",
 			ContainerFormat: "bare",
-			Filepath:        cfg.ImageFilePath,
+			Filepath:        imagePath,
 		}
 		uploadResp, err = vrmClient.Repositories().Upload(ctx, req)
 		if err != nil {
@@ -194,18 +235,18 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 	log.Printf("Tag %s is active", tagID)
 
-	vmName := fmt.Sprintf("%s-%s", cfg.VMNamePrefix, cfg.DateTag)
+	vmName := fmt.Sprintf("%s-%s", cfg.VMName, cfg.DateTag)
 
 	// Create VM from tag
 	createReq := &vpsservers.ServerCreateRequest{
 		Name:      vmName,
 		ImageID:   tagID,
-		FlavorID:  cfg.FlavorID,
-		KeypairID: cfg.KeypairID,
+		FlavorID:  cfg.VPSSetting.FlavorID,
+		KeypairID: cfg.VPSSetting.KeypairID,
 		NICs: []vpsservers.ServerNICCreateRequest{
 			{
-				NetworkID: cfg.NetworkID,
-				SGIDs:     []string{cfg.SecurityGroup},
+				NetworkID: cfg.VPSSetting.NetworkID,
+				SGIDs:     []string{cfg.VPSSetting.SecurityGroupID},
 			},
 		},
 	}
