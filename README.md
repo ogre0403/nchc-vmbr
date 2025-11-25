@@ -1,29 +1,51 @@
 # nchc-vmbr
 
-This sample demonstrates using the `Zillaforge` Cloud SDK to create VM snapshots and export them.
 
-Refactor notes:
-- The backup logic is now implemented in `internal/backup` with `LoadConfigFromEnv` and `Run` functions.
-- `cmd/backup` and `cmd/recover` act as thin CLIs that delegate to the internal packages.
+## VMBR（VM Backup & Restore）
 
-How to run:
-1. Create a `.env` file with required variables: API_PROTOCOL, API_HOST, API_TOKEN, PROJECT_SYS_CODE, SRC_VM, SNAPSHOT_NAME, CS_BUCKET
+`vmbr` 代表 VM Backup & Restore（虛擬機備份與還原）。保存 VM 的狀態，並在需要時從備份重建或還原 VM。
 
-Optional:
-- `DATE_TAG_FORMAT` - layout used to format the date tag for snapshots. If omitted, the default format `2006-01-02-15-04` is used. Use Go time layout strings for the format.
-2. Execute the backup command:
+- **備份流程（Backup Flow）**：
+    - **Snapshot**：對 VM 建立快照以捕捉當前狀態與磁碟映像。
+    - **Download**：快照或映像存入VRM的Repository，以 Tag 管理版本之後，下載至CS的物件儲存
+    - **Transfer**：透過rclone在不同的物件儲存間備份（例如從 CS 到 Shared S3）。
 
-```bash
-go run ./cmd/backup
+- **還原流程（Restore Flow）**：
+    - **Transfer**：透過rcloen從Shared S3 取回映像檔至CS。
+    - **Upload**：從CS將映像檔上傳至VRM的Repository，以 Tag 管理版本。
+    - **Create VM**：使用VRM的映像檔還原之前建立快照的VM。
+
+## VM Backup & Restore Flow
+
+```
+    Backup Flow                        Restore Flow  
+------------------                -------------------
+      +---------+                       +---------+
+      | Backup  |                       | Restore |
+      |  VM     |                       |   VM    |
+      +---------+                       +---------+
+           |                                 ^
+           | 1. Snapshot                     | 6. Create 
+           v                                 |
+      +---------+                       +---------+
+      |  VRM    |                       |   VRM   |
+      | Repo:Tag|                       | Repo:Tag|
+      +---------+                       +---------+
+           |                                 ^
+           | 2. Download                     | 5. Upload
+           v                                 |
+       +-------+                        +-------+
+       |  CS   |                        |   CS  |
+       +-------+                        +-------+
+           |                                 ^
+           | 3. Transfer                     | 4. Transfer
+           v                                 |
+   +------------------+               +------------------+
+   |   Shared S3      |<------------->|   Shared S3      |
+   +------------------+               +------------------+
+
 ```
 
-This repo uses `godotenv` to load variables and has a test for the `internal/backup` config loader.
 
-Recover flow:
-- Required env vars: API_PROTOCOL, API_HOST, API_TOKEN, PROJECT_SYS_CODE, RESTORE_IMAGE_NAME, RESTORE_IMAGE_PATH or (RESTORE_CS_BUCKET + DATE_TAG), RESTORE_FLAVOR_ID, RESTORE_NETWORK_ID
-- Optional: RESTORE_SG_ID, RESTORE_VM_PREFIX, RESTORE_PASSWORD_BASE64 (or RESTORE_PASSWORD), RESTORE_OS_TYPE
 
-To execute recover:
-```bash
-go run ./cmd/recover
-```
+
