@@ -34,6 +34,12 @@ func main() {
 		log.Fatalf("backup failed: %v", err)
 	}
 
+	// If transfer is not configured or no source S3 is provided, skip transfer.
+	if cfg.SrcS3Cfg == nil || !cfg.TransferS3 {
+		log.Println("Transfer disabled (no source S3 config or transfer flag off); skipping transfer")
+		return
+	}
+
 	// Wait for the source object to exist before starting the transfer.
 	const waitTimeout = 5 * time.Minute
 	const pollInterval = 5 * time.Second
